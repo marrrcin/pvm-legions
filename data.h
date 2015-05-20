@@ -9,7 +9,7 @@ typedef struct _res
 typedef struct _proc
 {
 	int id;
-	unsigned long ticketNumber;
+	long ticketNumber;
 	int size;
 } Process;
 
@@ -18,6 +18,10 @@ typedef enum _b
 	true,
 	false
 } bool;
+
+#define ANY -1
+
+#define ACCEPT 7
 
 //message types and theirs structures (order of pvm_pk*)
 #define MSG_SYNC 1

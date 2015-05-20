@@ -17,11 +17,9 @@ class Rebuilder(LoggingEventHandler):
 
     def on_modified(self, event):
         super(LoggingEventHandler, self).on_modified(event)
-
-
-        print "\n\n"
         what = 'directory' if event.is_directory else 'file'
         if(what == "file" and (event.src_path.endswith(".c") or event.src_path.endswith(".h"))):
+            print "\n\n"
             logging.info("Modified %s: %s", what, event.src_path)
             subprocess.call(["make","-B"])
             

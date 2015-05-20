@@ -3,6 +3,7 @@
 #include "slaveName.h"
 #include <string.h>
 #include "utils.h"
+#include <glib.h>
 void loadDataFromFile(char *fileName, int *numberOfResources, Resource ***r, int *numberOfProcesses, Process ***p)
 {
 	FILE *file;
@@ -66,6 +67,8 @@ int syncData(Resource **resources,Process **processes, int *slaveIds,int slavesC
 	}
 }
 
+
+
 int main(int argc, char *argv[])
 {
 	if(argc < 2)
@@ -73,9 +76,9 @@ int main(int argc, char *argv[])
 		printf("No input file!\n");
 		return -1;
 	}
-	
+
 	int i;
-	
+
 	//LOAD DATA
 	Resource **resources;
 	Process **processes;
@@ -87,10 +90,10 @@ int main(int argc, char *argv[])
 	int masterId,spawnedCount;
 	int *slaveIds;
 	slaveIds = (int*)malloc(numberOfProcesses * sizeof(int));
-	
+
 	masterId = pvm_mytid();
 	spawnedCount = pvm_spawn(SLAVENAME,NULL,PvmTaskDefault,"",numberOfProcesses,slaveIds);
-	
+
 	if(numberOfProcesses != spawnedCount)
 	{
 		printf("[ERROR] Could not spawn enough processes");
@@ -109,11 +112,11 @@ int main(int argc, char *argv[])
 		}
         printf("Synced\n");
 	}
-	
-	
-	
+
+
+
 	printf("Deallocating memory...\n");
-    freeMemory(i, resources, processes, numberOfProcesses, numberOfResources, slaveIds);
+    freeMemory(resources, processes, numberOfProcesses, numberOfResources, slaveIds);
     printf("Deallocated\n");
 
 
