@@ -2,7 +2,7 @@
 #include "data.h"
 #include "slaveName.h"
 #include <string.h>
-
+#include "utils.h"
 void loadDataFromFile(char *fileName, int *numberOfResources, Resource ***r, int *numberOfProcesses, Process ***p)
 {
 	FILE *file;
@@ -107,23 +107,14 @@ int main(int argc, char *argv[])
 			pvm_upkstr(str);
 			printf("%s\n",str);
 		}
+        printf("Synced\n");
 	}
 	
 	
 	
 	printf("Deallocating memory...\n");
-	for(i=0;i<numberOfResources;i++)
-	{
-		free(resources[i]);
-	}
-	free(resources);
-	for(i=0;i<numberOfProcesses;i++)
-	{
-		free(processes[i]);
-	}
-	free(processes);
-	free(slaveIds);
-	printf("Deallocated\n");
+    freeMemory(i, resources, processes, numberOfProcesses, numberOfResources, slaveIds);
+    printf("Deallocated\n");
 
 
 	printf("Invoking pvm_exit...\n");

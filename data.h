@@ -13,6 +13,12 @@ typedef struct _proc
 	int size;
 } Process;
 
+typedef enum _b
+{
+	true,
+	false
+} bool;
+
 //message types and theirs structures (order of pvm_pk*)
 #define MSG_SYNC 1
 /*
@@ -56,3 +62,4 @@ typedef struct _proc
 	(...)
 	
 */
+

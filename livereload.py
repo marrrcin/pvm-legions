@@ -6,14 +6,23 @@ from watchdog.events import LoggingEventHandler
 import subprocess
 
 class Rebuilder(LoggingEventHandler):
+    def on_moved(self, event):
+        pass
+
+    def on_created(self, event):
+        pass
+
+    def on_deleted(self, event):
+        pass
+
     def on_modified(self, event):
         super(LoggingEventHandler, self).on_modified(event)
 
 
         print "\n\n"
         what = 'directory' if event.is_directory else 'file'
-        logging.info("Modified %s: %s", what, event.src_path)
         if(what == "file" and (event.src_path.endswith(".c") or event.src_path.endswith(".h"))):
+            logging.info("Modified %s: %s", what, event.src_path)
             subprocess.call(["make","-B"])
             
         
