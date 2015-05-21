@@ -121,6 +121,13 @@ int main(int argc, char *argv[])
 
 
 	printf("Invoking pvm_exit...\n");
+    for(i=0;i<spawnedCount;i++)
+    {
+        pvm_recv(-1,MSG_SINGLE_STRING);
+        char str[255];
+        pvm_upkstr(str);
+        printf("%s\n",str);
+    }
 	pvm_exit();
 	printf("Finished\n");
 }

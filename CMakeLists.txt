@@ -13,6 +13,6 @@ set(SOURCE_FILES
     slave.c
     slaveName.h)
 
-add_executable(src ${SOURCE_FILES} utils.h)
+add_executable(src ${SOURCE_FILES} utils.h logger.h)
 
 include_directories("/usr/include/glib-2.0")

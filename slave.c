@@ -1,9 +1,11 @@
 #include "def.h"
 #include "data.h"
 #include "utils.h"
+#include "logger.h"
 #include <unistd.h>
 #include <glib.h>
 #include <time.h>
+#include <string.h>
 
 #define MILLIS_IN_CRITICALSECTION 1000
 #define MILLIS_IN_LOCALSECTION 1000
@@ -91,19 +93,24 @@ void handleRequestMessage(long ticket, long *maxTicket, int myId, Resource *curr
     pvm_upklong(&requestTicket,1,1);
     pvm_upkint(&resource,1,1);
 
+    char buff[255];
+    sprintf(buff,"Request message: ticket %ld for resource %d from #%d",requestTicket,resource,id);
+    logEvent(buff,myId);
+
     *maxTicket = requestTicket > *maxTicket ? requestTicket : *maxTicket;
 
     //MOST IMPORTANT THING IN THIS CODE
     if(wantsToEnter == false || resource != currentResource->id || (requestTicket<ticket) || (requestTicket == ticket && id < myId))
     {
         sendAllowMessage(id,currentResource->state);
+        logEvent("Allowed",myId);
     }
     else
     {
         int idx = getProcessIdx(id, processes, numOfProc);
         processes[idx]->ticketNumber = requestTicket;
         *blockedProcesses = g_list_append(*blockedProcesses,processes[idx]);
-
+        logEvent("Blocked",myId);
     }
 }
 
@@ -135,13 +142,26 @@ void unblockAllWaitingProcesses(GList **blockedProcesses)
     *blockedProcesses = NULL;
 }
 
+void blockedToString(GList *blockedProcesses,char *buff)
+{
+    GList *l;
+    Process *p;
+    for(l=blockedProcesses;l != NULL;l=l->next)
+    {
+        p = (Process*)l->data;
+        char tmp[64];
+        sprintf(tmp,"%d (ticket %ld),",p->id,p->ticketNumber);
+        strcat(buff,tmp);
+    }
+}
+
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmissing-noreturn"
 #pragma ide diagnostic ignored "OCDFAInspection"
 int main()
 {
 	//SYNC WITH MASTER
-	int myId,masterId,numberOfResources,numberOfProcesses,i;
+	int myId,masterId,numberOfResources,numberOfProcesses,i,mySize;
 
 	Resource **resources;
 	Process **processes;
@@ -153,6 +173,7 @@ int main()
 	syncWithMaster(&numberOfResources,&resources,&numberOfProcesses,&processes,&masterId);
     syncConfirm(myId, masterId, numberOfResources, numberOfProcesses);
     extractProcessIds(processes,numberOfProcesses,&processIds);
+    mySize = processes[getProcessIdx(myId,processes,numberOfProcesses)]->size;
     bool wantsToEnter = false;
     long ticket = 0,maxTicket = 0;
     int resourceRequested = 0, acceptedResponses = 0,status;
@@ -164,23 +185,38 @@ int main()
         ticket = maxTicket + 1;
         resourceRequested = rand() % numberOfResources;
         acceptedResponses = 0;
+        char tmp0[255];
+        sprintf(tmp0,"Sending request for resource %d, my size %d, ticket %ld",resourceRequested,mySize,ticket);
+        logEvent(tmp0,myId);
         broadcastEntryRequest(processIds, numberOfProcesses, myId, ticket, resourceRequested);
+        logEvent("Broadcasted",myId);
+
         currentResource = resources[getResourceIdx(resourceRequested,resources,numberOfResources)];
         while(acceptedResponses != numberOfProcesses - 1)
         {
+            logEvent("Waiting for critical section",myId);
             status = pvm_nrecv(ANY,MSG_ALLOW);
             if(status != 0)
             {
                 handleAllowMessage(&acceptedResponses,currentResource);
+                char buff[255];
+                sprintf(buff,"Handled allow message, accepted == %d",acceptedResponses);
+                logEvent(buff,myId);
             }
 
             status = pvm_nrecv(ANY,MSG_REQUEST);
             if(status != 0)
             {
                 handleRequestMessage(ticket,&maxTicket,myId, currentResource,wantsToEnter,&blockedProcesses,processes,numberOfProcesses);
+                char buff[255];
+                sprintf(buff,"Handled request message, blocked count == %d",(int)g_list_length(blockedProcesses));
+                logEvent(buff,myId);
             }
 
         }
+
+        logEvent("Accepted by every process!",myId);
+
 
         //CRITICAL SECTION
         endTime = (clock_t) (clock() + CLOCKS_PER_SEC/1000.0 * MILLIS_IN_CRITICALSECTION);
@@ -188,7 +224,9 @@ int main()
         {
             currentResource->state = 0; //if state was -1 that means this is the first process that enters Critical Section
         }
-
+        char tmp1[255];
+        sprintf(tmp1,"Entered critical section!");
+        logEvent(tmp1,myId);
         while(clock() < endTime)
         {
             //TODO
@@ -198,12 +236,19 @@ int main()
             if(status != 0)
             {
                 handleRequestMessage(ticket,&maxTicket,myId, currentResource,wantsToEnter,&blockedProcesses,processes,numberOfProcesses);
+                char buff[255];
+                sprintf(buff,"Handled request message, blocked count == %d",(int)g_list_length(blockedProcesses));
+                logEvent(buff,myId);
             }
         }
 
         //EXIT CRITICAL SECTION
         wantsToEnter = false;
         unblockAllWaitingProcesses(&blockedProcesses);
+        char tmp2[255];
+        sprintf(tmp2,"Exited critical section && unblocked waiting processes!");
+        logEvent(tmp2,myId);
+
 
         //LOCAL SECTION
         endTime = (clock_t) (clock() + CLOCKS_PER_SEC/1000.0 * MILLIS_IN_LOCALSECTION);
@@ -213,6 +258,9 @@ int main()
             if(status != 0)
             {
                 handleRequestMessage(ticket,&maxTicket,myId, currentResource,wantsToEnter,&blockedProcesses,processes,numberOfProcesses);
+                char buff[255];
+                sprintf(buff,"Handled request message, blocked count == %d",(int)g_list_length(blockedProcesses));
+                logEvent(buff,myId);
             }
         }
     }
