@@ -3,6 +3,10 @@
 #include "utils.h"
 #include <unistd.h>
 #include <glib.h>
+#include <time.h>
+
+#define MILLIS_IN_CRITICALSECTION 1000
+#define MILLIS_IN_LOCALSECTION 1000
 
 void syncWithMaster(int *numberOfResources,Resource ***r, int *numberOfProcesses,Process ***p,int *masterId)
 {
@@ -64,22 +68,22 @@ void broadcastEntryRequest(int *processIds, int numberOfProc, int myId, long tic
 }
 
 
-void handleAllowMessage(int *acceptedResponses)
+void handleAllowMessage(int *acceptedResponses,Resource *resource)
 {
-    int accept;
-    pvm_upkint(&accept,1,1);
+    int state;
+    pvm_upkint(&state,1,1);
+    resource->state = state;
     ++(*acceptedResponses);
 }
 
-void sendAllowMessage(int id)
+void sendAllowMessage(int id,int currentState)
 {
-    int msg = ACCEPT;
     pvm_initsend(PvmDataDefault);
-    pvm_pkint(&msg,1,1,);
+    pvm_pkint(&currentState,1,1);
     pvm_send(id,MSG_ALLOW);
 }
 
-void handleRequestMessage(long ticket, long *maxTicket, int myId, int myResource, bool wantsToEnter, GList **blockedProcesses,Process **processes,int numOfProc)
+void handleRequestMessage(long ticket, long *maxTicket, int myId, Resource *currentResource, bool wantsToEnter, GList **blockedProcesses,Process **processes,int numOfProc)
 {
     int id,resource;
     long requestTicket;
@@ -90,18 +94,46 @@ void handleRequestMessage(long ticket, long *maxTicket, int myId, int myResource
     *maxTicket = requestTicket > *maxTicket ? requestTicket : *maxTicket;
 
     //MOST IMPORTANT THING IN THIS CODE
-    if(wantsToEnter == false || resource != myResource || (requestTicket<ticket) || (requestTicket == ticket && id < myId))
+    if(wantsToEnter == false || resource != currentResource->id || (requestTicket<ticket) || (requestTicket == ticket && id < myId))
     {
-        sendAllowMessage(id);
+        sendAllowMessage(id,currentResource->state);
     }
     else
     {
-        int idx = getPorocessIdx(id,processes,numOfProc);
+        int idx = getProcessIdx(id, processes, numOfProc);
         processes[idx]->ticketNumber = requestTicket;
         *blockedProcesses = g_list_append(*blockedProcesses,processes[idx]);
+
     }
 }
 
+void unblockOneWaitingProcess(Resource *currentResource,GList **blockedProcesses)
+{
+    GList *min;
+    Process *blocked;
+    min = findProcessWithMinTicket(*blockedProcesses);
+    blocked = (Process*)min->data;
+    if(blocked->size + currentResource->state <= currentResource->size)
+    {
+        //currentResource->state += blocked->size;
+        sendAllowMessage(blocked->id,currentResource->state);
+        removeProcess(blocked->id,blockedProcesses);
+        currentResource->state += blocked->size;
+    }
+}
+
+void unblockAllWaitingProcesses(GList **blockedProcesses)
+{
+    GList *l;
+    Process *current;
+    for(l=*blockedProcesses;l != NULL; l = l->next)
+    {
+        current = (Process*)l->data;
+        sendAllowMessage(current->id,-1);
+    }
+    g_list_free(*blockedProcesses);
+    *blockedProcesses = NULL;
+}
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmissing-noreturn"
@@ -113,6 +145,7 @@ int main()
 
 	Resource **resources;
 	Process **processes;
+    Resource *currentResource;
     GList *blockedProcesses;
     int *processIds;
 	myId=pvm_mytid();
@@ -123,6 +156,7 @@ int main()
     bool wantsToEnter = false;
     long ticket = 0,maxTicket = 0;
     int resourceRequested = 0, acceptedResponses = 0,status;
+    clock_t endTime;
     while(1==1)
     {
         //PREPARE TO ENTRANCE
@@ -131,33 +165,60 @@ int main()
         resourceRequested = rand() % numberOfResources;
         acceptedResponses = 0;
         broadcastEntryRequest(processIds, numberOfProcesses, myId, ticket, resourceRequested);
+        currentResource = resources[getResourceIdx(resourceRequested,resources,numberOfResources)];
         while(acceptedResponses != numberOfProcesses - 1)
         {
             status = pvm_nrecv(ANY,MSG_ALLOW);
             if(status != 0)
             {
-                handleAllowMessage(&acceptedResponses);
+                handleAllowMessage(&acceptedResponses,currentResource);
             }
 
             status = pvm_nrecv(ANY,MSG_REQUEST);
             if(status != 0)
             {
-                handleRequestMessage(ticket,&maxTicket,myId, resourceRequested,wantsToEnter,&blockedProcesses,processes,numberOfProcesses);
+                handleRequestMessage(ticket,&maxTicket,myId, currentResource,wantsToEnter,&blockedProcesses,processes,numberOfProcesses);
             }
 
         }
 
         //CRITICAL SECTION
-        ;
+        endTime = (clock_t) (clock() + CLOCKS_PER_SEC/1000.0 * MILLIS_IN_CRITICALSECTION);
+        if(currentResource->state == -1)
+        {
+            currentResource->state = 0; //if state was -1 that means this is the first process that enters Critical Section
+        }
+
+        while(clock() < endTime)
+        {
+            //TODO
+            //unblockOneWaitingProcess(currentResource,&blockedProcesses);
+
+            status = pvm_nrecv(ANY,MSG_REQUEST);
+            if(status != 0)
+            {
+                handleRequestMessage(ticket,&maxTicket,myId, currentResource,wantsToEnter,&blockedProcesses,processes,numberOfProcesses);
+            }
+        }
 
         //EXIT CRITICAL SECTION
         wantsToEnter = false;
+        unblockAllWaitingProcesses(&blockedProcesses);
 
         //LOCAL SECTION
-
+        endTime = (clock_t) (clock() + CLOCKS_PER_SEC/1000.0 * MILLIS_IN_LOCALSECTION);
+        while(clock() < endTime)
+        {
+            status = pvm_nrecv(ANY,MSG_REQUEST);
+            if(status != 0)
+            {
+                handleRequestMessage(ticket,&maxTicket,myId, currentResource,wantsToEnter,&blockedProcesses,processes,numberOfProcesses);
+            }
+        }
     }
 
     freeMemory(resources,processes,numberOfProcesses,numberOfResources,NULL);
+    free(processIds);
 	pvm_exit();
 	
 	

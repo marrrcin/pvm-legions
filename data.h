@@ -3,6 +3,7 @@ typedef struct _res
 {
 	int id;
 	int size;
+	int state;
 } Resource;
 
 //legion
@@ -49,7 +50,7 @@ typedef enum _b
 /*
 	send between slaves to allow access into cricital section (use tract)
 	contents:
-	1. 
+	1. resource state (int)
 */
 
 #define MSG_SINGLE_STRING 1234

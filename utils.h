@@ -60,18 +60,48 @@ GList* findProcessById(int id,GList *list)
     return g_list_find_custom(list,&toFind,processByIdComparer);
 }
 
-void removeProcess(int id,GList *list)
+GList* findProcessWithMinTicket(GList *processes)
 {
-    GList *toRemove = findProcessById(id,list);
-    g_list_remove(list,toRemove->data);
+    GList *l,*min;
+    Process *minProc,*current;
+    minProc = (Process*)processes->data;
+    for (l = processes; l != NULL; l = l->next)
+    {
+        current = (Process*)l->data;
+        if(current->ticketNumber < minProc->ticketNumber)
+        {
+            minProc = (Process*)l;
+            min = l;
+        }
+    }
+    return min;
 }
 
-int getPorocessIdx(int id,Process **processes,int count)
+void removeProcess(int id,GList **list)
+{
+    GList *toRemove = findProcessById(id,*list);
+    *list = g_list_remove(*list,toRemove->data);
+}
+
+int getProcessIdx(int id, Process **processes, int count)
 {
     int i=0;
     for(i=0;i<count;i++)
     {
         if(processes[i]->id == id)
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int getResourceIdx(int id,Resource **resources, int count)
+{
+    int i;
+    for(i=0;i<count;i++)
+    {
+        if(resources[i]->id == id)
         {
             return i;
         }
