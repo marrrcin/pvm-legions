@@ -51,6 +51,7 @@ typedef enum _b
 	send between slaves to allow access into cricital section (use tract)
 	contents:
 	1. resource state (int)
+ 	2. sender process id (int)
 */
 
 #define MSG_SINGLE_STRING 1234
