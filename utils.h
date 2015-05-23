@@ -62,9 +62,15 @@ GList* findProcessById(int id,GList *list)
 
 GList* findProcessWithMinTicket(GList *processes)
 {
+    if(processes == NULL)
+    {
+        return NULL;
+    }
+
     GList *l,*min;
     Process *minProc,*current;
     minProc = (Process*)processes->data;
+    min = processes;
     for (l = processes; l != NULL; l = l->next)
     {
         current = (Process*)l->data;
