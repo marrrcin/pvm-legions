@@ -14,7 +14,8 @@ void logEvent(char *message,int id)
 {
     char fileName[255];
     FILE *file;
-    sprintf(fileName,"/home/marcin/programowanie-rozproszone/logs/%d.log",id);
+    //sprintf(fileName,"/home/marcin/programowanie-rozproszone/logs/%d.log",id);
+    sprintf(fileName,"/home/tortila/Documents/uni/pr/logs/%d.log",id);
 
     if(access(fileName,F_OK) != -1 && first != 1) //file.exists() == true
     {

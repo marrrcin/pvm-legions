@@ -4,7 +4,7 @@
 #include <string.h>
 #include "utils.h"
 #include <glib.h>
-void loadDataFromFile(char *fileName, int *numberOfResources, Resource ***r, int *numberOfProcesses, Process ***p)
+int loadDataFromFile(char *fileName, int *numberOfResources, Resource ***r, int *numberOfProcesses, Process ***p)
 {
 	FILE *file;
 	int procSize,resSize,i;
@@ -15,27 +15,42 @@ void loadDataFromFile(char *fileName, int *numberOfResources, Resource ***r, int
 	file = fopen(fileName,"r");
 	fscanf(file,"%d\n",numberOfProcesses);
 	processes = (Process**)malloc(*numberOfProcesses * sizeof(Process*));
+
+	int sumProc = 0;
+	int maxProc = 0;
 	for(i=0;i<*numberOfProcesses;i++)
 	{
 		fscanf(file,"%d\n",&procSize);
 		processes[i] = (Process*)malloc(sizeof(Process));
 		processes[i]->id = i;
 		processes[i]->size = procSize;
+		sumProc += procSize;
+		maxProc = procSize > maxProc ? procSize : maxProc;
 	}
 	
 	fscanf(file,"%d\n",numberOfResources);
 	resources = (Resource**)malloc(*numberOfResources * sizeof(Resource*));
+
+	int sumRes = 0;
+	int minRes = INFINITY;
 	for(i=0;i<*numberOfResources;i++)
 	{
 		fscanf(file,"%d\n",&resSize);
 		resources[i] = (Resource*)malloc(sizeof(Resource));
 		resources[i]->id = i;
 		resources[i]->size = resSize;
+		sumRes += resSize;
+		minRes = resSize < minRes ? resSize : minRes;
 	}
 	
 	fclose(file);
 	*r = resources;
 	*p = processes;
+
+	if ((numberOfProcesses <= numberOfResources) || (sumProc <= sumRes) || (minRes <= maxProc))
+		return 1;
+	else
+		return 0;
 }
 
 int syncData(Resource **resources,Process **processes, int *slaveIds,int slavesCount, int resCount,int masterId)
@@ -82,18 +97,24 @@ int main(int argc, char *argv[])
 	//LOAD DATA
 	Resource **resources;
 	Process **processes;
-	int numberOfProcesses,numberOfResources;
-	loadDataFromFile(argv[1],&numberOfResources,&resources,&numberOfProcesses,&processes);
-	printf("Loaded %d legions and %d resoures...\n",numberOfProcesses,numberOfResources);
+	int numberOfProcesses, numberOfResources, err;
+	err = loadDataFromFile(argv[1],&numberOfResources,&resources,&numberOfProcesses,&processes);
 
 	//SPAWN SLAVES AND SYNC DATA
 	int masterId,spawnedCount;
 	int *slaveIds;
 	slaveIds = (int*)malloc(numberOfProcesses * sizeof(int));
 
+	if (err) {
+		printf("Invalid input data. Please try again.\n");
+		freeMemory(resources, processes, numberOfProcesses, numberOfResources, slaveIds);
+		return -1;
+	}
+
+	printf("Loaded %d legions and %d resoures...\n",numberOfProcesses,numberOfResources);
 	masterId = pvm_mytid();
 	spawnedCount = pvm_spawn(SLAVENAME,NULL,PvmTaskDefault,"",numberOfProcesses,slaveIds);
-
+	printf("spawnedCount: %d", spawnedCount);
 	if(numberOfProcesses != spawnedCount)
 	{
 		printf("[ERROR] Could not spawn enough processes");
