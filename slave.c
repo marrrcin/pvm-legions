@@ -2,14 +2,10 @@
 #include "data.h"
 #include "utils.h"
 #include "logger.h"
-#include <unistd.h>
-#include <glib.h>
-#include <time.h>
-#include <string.h>
 
 //MAX MILLIS IN SECTIONS
-#define MILLIS_IN_CRITICALSECTION 6333
-#define MILLIS_IN_LOCALSECTION 6777
+#define MILLIS_IN_CRITICALSECTION 13000
+#define MILLIS_IN_LOCALSECTION 3000
 
 void syncWithMaster(int *numberOfResources,Resource ***r, int *numberOfProcesses,Process ***p,int *masterId)
 {
@@ -54,7 +50,7 @@ void syncWithMaster(int *numberOfResources,Resource ***r, int *numberOfProcesses
 
 void syncConfirm(int myId, int masterId, int numberOfResources, int numberOfProcesses) {
     char buffer[255];
-    sprintf(buffer,"%d has received %d legions and %d resources",myId,numberOfProcesses,numberOfResources);
+    sprintf(buffer,"----- %d has received %d legions and %d resources",myId,numberOfProcesses,numberOfResources);
     pvm_initsend(PvmDataDefault);
     pvm_pkstr(buffer);
     pvm_send(masterId,MSG_SINGLE_STRING);
@@ -71,7 +67,6 @@ void broadcastEntryRequest(int *processIds, int numberOfProc, int myId, long tic
     pvm_mcast(processIds,numberOfProc,MSG_REQUEST);
 }
 
-
 void handleAllowMessage(int *acceptedResponses,Resource *resource,int myId,int *emptyStatesReceived)
 {
     int state,sender;
@@ -86,14 +81,14 @@ void handleAllowMessage(int *acceptedResponses,Resource *resource,int myId,int *
     ++(*acceptedResponses);
 
     char log[255];
-    sprintf(log,"Received allow message from #%d",sender);
+    sprintf(log,"----- Received allow message from #%d",sender);
     logEvent(log,myId);
 }
 
 void sendAllowMessage(int id,int currentState,int myId)
 {
     char log[255];
-    sprintf(log,"Sending allow message to #%d",id);
+    sprintf(log,"----- Sending allow message to #%d",id);
     logEvent(log,myId);
     pvm_initsend(PvmDataDefault);
     pvm_pkint(&currentState,1,1);
@@ -101,7 +96,7 @@ void sendAllowMessage(int id,int currentState,int myId)
     pvm_send(id,MSG_ALLOW);
 }
 
-void handleRequestMessage(long ticket, long *maxTicket, int myId, Resource *currentResource, bool wantsToEnter, GList **blockedProcesses,Process **processes,int numOfProc)
+void handleRequestMessage(long ticket, long *maxTicket, int myId, Resource *currentResource, bool wantsToEnter, GList **blockedProcesses,Process **processes,int numOfProc, bool inCriticalSection)
 {
     int id,resource;
     long requestTicket;
@@ -109,51 +104,57 @@ void handleRequestMessage(long ticket, long *maxTicket, int myId, Resource *curr
     pvm_upklong(&requestTicket,1,1);
     pvm_upkint(&resource,1,1);
 
+    char where[9];
+    if (inCriticalSection == true)
+        sprintf(where, "CRITICAL");
+    else if (wantsToEnter == true)
+        sprintf(where, "WAIT");
+    else
+        sprintf(where, "LOCAL");
+
     char buff[255];
-    sprintf(buff,"Request message: ticket %ld for resource %d from #%d",requestTicket,resource,id);
+    sprintf(buff,"[%s] Request message: ticket %ld for resource %d from #%d", where, requestTicket, resource, id);
     logEvent(buff,myId);
 
     *maxTicket = requestTicket > *maxTicket ? requestTicket : *maxTicket;
     char buff2[64];
-    sprintf(buff2,"Max ticket is now %ld",*maxTicket);
+    sprintf(buff2,"[%s] Max ticket is now %ld", where, *maxTicket);
     logEvent(buff2,myId);
 
+    char buff3[64];
     //MOST IMPORTANT THING IN THIS CODE
+    //get id of process that is requesting critical section
+    int idx = getProcessIdx(id, processes, numOfProc);
+
+    //send ALLOW msg if at least one of the following is true:
+    //* current process is in local section
+    //* other process is requesting for other resource than current one
+    //* other process's ticket has higher priority than current one's
+    //* tickets are equal and other process has smaller id
     if(wantsToEnter == false || resource != currentResource->id || (requestTicket<ticket) || (requestTicket == ticket && id < myId))
     {
         sendAllowMessage(id,-1,myId);
-        logEvent("Allowed",myId);
+        sprintf(buff3, "[%s] Allowed", where);
+        logEvent(buff3,myId);
     }
+    // send ALLOW msg if all below are true:
+    // * current process is in critical section
+    // * other process requests for the same resource
+    // * there's still some room left for this process
+    else if (inCriticalSection == true && resource == currentResource->id && currentResource->size >= currentResource->state + processes[idx]->size)
+    {
+        sendAllowMessage(id,-1,myId);
+        sprintf(buff3, "[%s] WE'LL FIT TOGETHER! Allowed", where);
+        logEvent(buff3,myId);
+    }
+    // block requesting process
     else
     {
-        int idx = getProcessIdx(id, processes, numOfProc);
         processes[idx]->ticketNumber = requestTicket;
         GList *l = g_list_append(*blockedProcesses,processes[idx]);
         *blockedProcesses = l;
-        logEvent("Blocked",myId);
-    }
-}
-
-void unblockOneWaitingProcess(Resource *currentResource,GList **blockedProcesses, int myId, int mySize)
-{
-    GList *min;
-    Process *blocked;
-    min = findProcessWithMinTicket(*blockedProcesses);
-
-    if(min == NULL)
-    {
-        return;
-    }
-
-    blocked = (Process*)min->data;
-    if(blocked->size + currentResource->state <= currentResource->size)
-    {
-        currentResource->state += blocked->size;
-        char buff[255];
-        sprintf(buff,"Unblocking process #%d with size %d, resource state after unblock == %d / %d",blocked->id,blocked->size,currentResource->state,currentResource->size);
-        logEvent(buff,myId);
-        sendAllowMessage(blocked->id,currentResource->state,myId);
-        removeProcess(blocked->id,blockedProcesses);
+        sprintf(buff3, "[%s] Blocked", where);
+        logEvent(buff3,myId);
     }
 }
 
@@ -170,26 +171,13 @@ void unblockAllWaitingProcesses(GList **blockedProcesses,int myId)
     *blockedProcesses = NULL;
 }
 
-void blockedToString(GList *blockedProcesses,char *buff)
-{
-    GList *l;
-    Process *p;
-    for(l=blockedProcesses;l != NULL;l=l->next)
-    {
-        p = (Process*)l->data;
-        char tmp[64];
-        sprintf(tmp,"%d (ticket %ld),",p->id,p->ticketNumber);
-        strcat(buff,tmp);
-    }
-}
-
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmissing-noreturn"
 #pragma ide diagnostic ignored "OCDFAInspection"
 int main()
 {
 	//SYNC WITH MASTER
-	int myId,masterId,numberOfResources,numberOfProcesses,i,mySize;
+	int myId, masterId, numberOfResources, numberOfProcesses, mySize;
 
 	Resource **resources;
 	Process **processes;
@@ -204,6 +192,7 @@ int main()
     mySize = processes[getProcessIdx(myId,processes,numberOfProcesses)]->size;
 
     bool wantsToEnter = false;
+    bool inCriticalSection = false;
     long ticket = 0,maxTicket = 0;
     int resourceRequested = 0, acceptedResponses = 0,status;
     clock_t endTime;
@@ -215,14 +204,14 @@ int main()
         resourceRequested = rand() % numberOfResources;
         acceptedResponses = 0;
         char tmp0[255];
-        sprintf(tmp0,"Sending request for resource %d, my size %d, ticket %ld",resourceRequested,mySize,ticket);
+        sprintf(tmp0,"[WAIT START] Sending request for resource %d, my size %d, ticket %ld",resourceRequested,mySize,ticket);
         logEvent(tmp0,myId);
         broadcastEntryRequest(processIds, numberOfProcesses, myId, ticket, resourceRequested);
-        logEvent("Broadcasted",myId);
+        logEvent("[WAIT] Broadcasted",myId);
 
         currentResource = resources[resourceRequested];
         int emptyStatesReceived = 0;
-        logEvent("Waiting for critical section",myId);
+        logEvent("[WAIT] ...",myId);
         while(acceptedResponses != numberOfProcesses - 1)
         {
             status = pvm_nrecv(ANY,MSG_ALLOW);
@@ -230,23 +219,22 @@ int main()
             {
                 handleAllowMessage(&acceptedResponses,currentResource,myId,&emptyStatesReceived);
                 char buff[255];
-                sprintf(buff,"Handled allow message, accepted == %d, emptyStates counter == %d",acceptedResponses,emptyStatesReceived);
+                sprintf(buff,"[WAIT] Handled allow message, accepted == %d, emptyStates counter == %d",acceptedResponses,emptyStatesReceived);
                 logEvent(buff,myId);
             }
 
             status = pvm_nrecv(ANY,MSG_REQUEST);
             if(status != 0)
             {
-                handleRequestMessage(ticket,&maxTicket,myId, currentResource,wantsToEnter,&blockedProcesses,processes,numberOfProcesses);
+                handleRequestMessage(ticket,&maxTicket,myId, currentResource,wantsToEnter,&blockedProcesses,processes,numberOfProcesses,inCriticalSection);
                 char buff[255];
-                sprintf(buff,"Handled request message, blocked count == %d",(int)g_list_length(blockedProcesses));
+                sprintf(buff,"[WAIT] Handled request message, blocked count == %d",(int)g_list_length(blockedProcesses));
                 logEvent(buff,myId);
             }
 
         }
 
-        logEvent("Accepted by every process!",myId);
-
+        logEvent("[WAIT STOP] Accepted by every process!",myId);
 
         //CRITICAL SECTION
         endTime = (clock_t) (clock() + CLOCKS_PER_SEC/1000.0 * (1000.0 + rand()%MILLIS_IN_CRITICALSECTION));
@@ -254,58 +242,56 @@ int main()
         {
             currentResource->state = mySize; //if state was -1 that means this is the first process that enters Critical Section
             char buff[255];
-            sprintf(buff,"Entering as a first process in %d resource",resourceRequested);
+            sprintf(buff,"[CRITICAL START] Entering as a first process in %d resource",resourceRequested);
             logEvent(buff,myId);
         }
+        inCriticalSection = true;
         char tmp1[255];
-        sprintf(tmp1,"Entered critical section no. %d! Resource state == %d",resourceRequested,currentResource->state);
+        sprintf(tmp1,"[CRITICAL START] Entered critical section no. %d! Resource state == %d",resourceRequested,currentResource->state);
         logEvent(tmp1,myId);
+
+        // spend some time in critical section, sending ALLOW messages to all processes
         while(clock() < endTime)
         {
-            unblockOneWaitingProcess(currentResource,&blockedProcesses,myId,mySize);
-
             status = pvm_nrecv(ANY,MSG_REQUEST);
             if(status != 0)
             {
-                handleRequestMessage(ticket,&maxTicket,myId, currentResource,wantsToEnter,&blockedProcesses,processes,numberOfProcesses);
+                handleRequestMessage(ticket,&maxTicket,myId, currentResource,wantsToEnter,&blockedProcesses,processes,numberOfProcesses,inCriticalSection);
                 char buff[255];
-                sprintf(buff,"Handled request message, blocked count == %d",(int)g_list_length(blockedProcesses));
+                sprintf(buff,"[CRITICAL] Handled request message, blocked count == %d",(int)g_list_length(blockedProcesses));
                 logEvent(buff,myId);
             }
         }
 
         //EXIT CRITICAL SECTION
-        logEvent("Exiting critical section",myId);
+        logEvent("[CRITICAL] Exiting critical section",myId);
+        inCriticalSection = false;
         wantsToEnter = false;
         unblockAllWaitingProcesses(&blockedProcesses,myId);
         char tmp2[255];
-        sprintf(tmp2,"Exited critical section && unblocked waiting processes!");
+        sprintf(tmp2,"[CRTICAL STOP] Exited critical section && unblocked waiting processes!");
         logEvent(tmp2,myId);
 
-
         //LOCAL SECTION
-        logEvent("Entered local section",myId);
+        logEvent("[LOCAL START] Entered local section",myId);
         endTime = (clock_t) (clock() + CLOCKS_PER_SEC/1000.0 * (1000.0 + rand()%MILLIS_IN_LOCALSECTION));
         while(clock() < endTime)
         {
             status = pvm_nrecv(ANY,MSG_REQUEST);
             if(status != 0)
             {
-                handleRequestMessage(ticket,&maxTicket,myId, currentResource,wantsToEnter,&blockedProcesses,processes,numberOfProcesses);
+                handleRequestMessage(ticket,&maxTicket,myId, currentResource,wantsToEnter,&blockedProcesses,processes,numberOfProcesses,inCriticalSection);
                 char buff[255];
-                sprintf(buff,"Handled request message, blocked count == %d",(int)g_list_length(blockedProcesses));
+                sprintf(buff,"[LOCAL] Handled request message, blocked count == %d",(int)g_list_length(blockedProcesses));
                 logEvent(buff,myId);
             }
         }
-        logEvent("Exited local section",myId);
+        logEvent("[LOCAL STOP] Exited local section",myId);
     }
 
     freeMemory(resources,processes,numberOfProcesses,numberOfResources,NULL);
     free(processIds);
 	pvm_exit();
-	
-	
+
 }
 #pragma clang diagnostic pop
-
-
