@@ -67,7 +67,7 @@ void broadcastEntryRequest(int *processIds, int numberOfProc, int myId, long tic
     pvm_mcast(processIds,numberOfProc,MSG_REQUEST);
 }
 
-void handleAllowMessage(int *acceptedResponses,Resource *resource,int myId,int *emptyStatesReceived)
+int handleAllowMessage(int *acceptedResponses, Resource *resource, int myId, int *emptyStatesReceived)
 {
     int state,sender;
     pvm_upkint(&state,1,1);
@@ -83,6 +83,7 @@ void handleAllowMessage(int *acceptedResponses,Resource *resource,int myId,int *
     char log[255];
     sprintf(log,"[WAIT] Received allow message from #%d",sender);
     logEvent(log,myId);
+    return state;
 }
 
 void sendAllowMessage(int id,int currentState,int myId)
@@ -239,6 +240,9 @@ int main()
     long ticket = 0,maxTicket = 0;
     int resourceRequested = 0, acceptedResponses = 0,status;
     clock_t endTime;
+
+    int lastKnownState = -1;
+
     while(1==1)
     {
         //PREPARE TO ENTRANCE
@@ -260,7 +264,11 @@ int main()
             status = pvm_nrecv(ANY,MSG_ALLOW);
             if(status != 0)
             {
-                handleAllowMessage(&acceptedResponses,currentResource,myId,&emptyStatesReceived);
+                int stateReceived = handleAllowMessage(&acceptedResponses, currentResource, myId, &emptyStatesReceived);
+
+                if (stateReceived != -1)
+                    lastKnownState = stateReceived;
+
                 char buff[255];
                 sprintf(buff,"[WAIT] Handled allow message, accepted == %d, emptyStates counter == %d",acceptedResponses,emptyStatesReceived);
                 logEvent(buff,myId);
@@ -280,20 +288,26 @@ int main()
         logEvent("[WAIT STOP] Accepted by every process!", myId);
 
         //CRITICAL SECTION
+
         endTime = (clock_t) (clock() + CLOCKS_PER_SEC/1000.0 * (1000.0 + rand()%MILLIS_IN_CRITICALSECTION));
+
         if(emptyStatesReceived == acceptedResponses)
         {
+            //if state was -1 that means this is the first process that enters Critical Section
+            currentResource->state = mySize;
             char buff[255];
             sprintf(buff,"[CRITICAL START] Entering as a first process in %d resource",resourceRequested);
             logEvent(buff,myId);
         }
-
-        if (currentResource->state != -1)
-            currentResource->state += mySize;
         else
-            currentResource->state = mySize;
-            //if state was -1 that means this is the first process that enters Critical Section
-
+        {
+            // update current resource's state according to last state you know
+            // if it's -1, then you're the only process in crit section
+            // NO NEED TO VALIDATE WHETHER YOU FIT OR NOT
+            // because if you got ack from other process that knows current state (!= -1), then you will fit
+            currentResource->state = lastKnownState != -1 ? lastKnownState : 0;
+            currentResource->state += mySize;
+        }
 
         inCriticalSection = true;
         char tmp1[255];
