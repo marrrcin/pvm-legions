@@ -78,17 +78,17 @@ void handleAllowMessage(int *acceptedResponses,Resource *resource,int myId,int *
         ++(*emptyStatesReceived);
     }
 
-    ++(*acceptedResponses);
+    (*acceptedResponses)++;
 
     char log[255];
-    sprintf(log,"----- Received allow message from #%d",sender);
+    sprintf(log,"[WAIT] Received allow message from #%d",sender);
     logEvent(log,myId);
 }
 
 void sendAllowMessage(int id,int currentState,int myId)
 {
     char log[255];
-    sprintf(log,"----- Sending allow message to #%d",id);
+    sprintf(log,"---------- Sending allow message to #%d",id);
     logEvent(log,myId);
     pvm_initsend(PvmDataDefault);
     pvm_pkint(&currentState,1,1);
@@ -117,34 +117,58 @@ void handleRequestMessage(long ticket, long *maxTicket, int myId, Resource *curr
     logEvent(buff,myId);
 
     *maxTicket = requestTicket > *maxTicket ? requestTicket : *maxTicket;
-    char buff2[64];
+    char buff2[100];
     sprintf(buff2,"[%s] Max ticket is now %ld", where, *maxTicket);
     logEvent(buff2,myId);
 
-    char buff3[64];
+    char buff3[100];
     //MOST IMPORTANT THING IN THIS CODE
     //get id of process that is requesting critical section
     int idx = getProcessIdx(id, processes, numOfProc);
 
+
     //send ALLOW msg if at least one of the following is true:
     //* current process is in local section
+    bool inLocal = wantsToEnter == false ? true : false;
+
     //* other process is requesting for other resource than current one
+    bool otherResource = resource != currentResource->id ? true : false;
+
     //* other process's ticket has higher priority than current one's
+    bool lowerTicket = requestTicket < ticket ? true : false;
+
     //* tickets are equal and other process has smaller id
-    if(wantsToEnter == false || resource != currentResource->id || (requestTicket<ticket) || (requestTicket == ticket && id < myId))
+    bool higherId = (requestTicket == ticket && id < myId) ? true : false;
+
+    char why[30];
+    bool allowing = true;
+    if (inLocal == true)
+        sprintf(why, "IN LOCAL");
+    else if (otherResource == true)
+        sprintf(why, "OTHER RESOURCE");
+    else if (lowerTicket == true)
+        sprintf(why, "LOWER PRIORITY");
+    else if (higherId == true)
+        sprintf(why, "HIGHER ID");
+    else allowing = false;
+
+    // one of the above was true
+    if(allowing == true)
     {
         sendAllowMessage(id,-1,myId);
-        sprintf(buff3, "[%s] Allowed", where);
+        sprintf(buff3, "[%s] Allowed because %s", where, why);
         logEvent(buff3,myId);
     }
+
     // send ALLOW msg if all below are true:
     // * current process is in critical section
     // * other process requests for the same resource
     // * there's still some room left for this process
     else if (inCriticalSection == true && resource == currentResource->id && currentResource->size >= currentResource->state + processes[idx]->size)
     {
-        sendAllowMessage(id,-1,myId);
-        sprintf(buff3, "[%s] WE'LL FIT TOGETHER! Allowed", where);
+        sprintf(why, "EMPTY SPACE");
+        sendAllowMessage(id, currentResource->state, myId);
+        sprintf(buff3, "[%s] Allowed because %s", where, why);
         logEvent(buff3,myId);
     }
     // block requesting process
@@ -166,9 +190,28 @@ void unblockAllWaitingProcesses(GList **blockedProcesses,int myId)
     {
         current = (Process*)l->data;
         sendAllowMessage(current->id,-1,myId);
+        logEvent("[CRITICAL STOP] Allowed because EXIT CRITICAL", myId);
     }
     g_list_free(*blockedProcesses);
     *blockedProcesses = NULL;
+}
+
+void unblockFittingProcesses(Resource *currentResource, GList **blockedProcesses, int myId)
+{
+    Process *blocked;
+    GList *l;
+
+    for(l = *blockedProcesses; l != NULL; l = l->next)
+    {
+        blocked = (Process*)l->data;
+        if(blocked->size + currentResource->state <= currentResource->size)
+        {
+            sendAllowMessage(blocked->id, currentResource->state, myId);
+            logEvent("[CRITICAL] Allowed because WILL FIT", myId);
+            removeProcess(blocked->id, blockedProcesses);
+        }
+    }
+
 }
 
 #pragma clang diagnostic push
@@ -234,22 +277,30 @@ int main()
 
         }
 
-        logEvent("[WAIT STOP] Accepted by every process!",myId);
+        logEvent("[WAIT STOP] Accepted by every process!", myId);
 
         //CRITICAL SECTION
         endTime = (clock_t) (clock() + CLOCKS_PER_SEC/1000.0 * (1000.0 + rand()%MILLIS_IN_CRITICALSECTION));
         if(emptyStatesReceived == acceptedResponses)
         {
-            currentResource->state = mySize; //if state was -1 that means this is the first process that enters Critical Section
             char buff[255];
             sprintf(buff,"[CRITICAL START] Entering as a first process in %d resource",resourceRequested);
             logEvent(buff,myId);
         }
+
+        if (currentResource->state != -1)
+            currentResource->state += mySize;
+        else
+            currentResource->state = mySize;
+            //if state was -1 that means this is the first process that enters Critical Section
+
+
         inCriticalSection = true;
         char tmp1[255];
-        sprintf(tmp1,"[CRITICAL START] Entered critical section no. %d! Resource state == %d",resourceRequested,currentResource->state);
+        sprintf(tmp1,"[CRITICAL START] Entered critical section no. %d! \n----- Resource state: %d/%d", resourceRequested, currentResource->state, currentResource->size);
         logEvent(tmp1,myId);
 
+        unblockFittingProcesses(currentResource, &blockedProcesses, myId);
         // spend some time in critical section, sending ALLOW messages to all processes
         while(clock() < endTime)
         {
@@ -267,7 +318,7 @@ int main()
         logEvent("[CRITICAL] Exiting critical section",myId);
         inCriticalSection = false;
         wantsToEnter = false;
-        unblockAllWaitingProcesses(&blockedProcesses,myId);
+        unblockAllWaitingProcesses(&blockedProcesses, myId);
         char tmp2[255];
         sprintf(tmp2,"[CRTICAL STOP] Exited critical section && unblocked waiting processes!");
         logEvent(tmp2,myId);
