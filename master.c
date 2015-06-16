@@ -30,7 +30,7 @@ int loadDataFromFile(char *fileName, int *numberOfResources, Resource ***r, int 
 	
 	fscanf(file,"%d\n",numberOfResources);
 	resources = (Resource**)malloc(*numberOfResources * sizeof(Resource*));
-
+	printf("Processes : %d | Resources : %d\n",*numberOfProcesses,*numberOfResources);
 	int sumRes = 0;
 	int minRes = INFINITY;
 	for(i=0;i<*numberOfResources;i++)
@@ -47,7 +47,8 @@ int loadDataFromFile(char *fileName, int *numberOfResources, Resource ***r, int 
 	*r = resources;
 	*p = processes;
 
-	if ((numberOfProcesses <= numberOfResources) || (sumProc <= sumRes) || (minRes <= maxProc))
+	printf("SumProc %d , SumRes %d, MinRes %d, MaxProc %d\n",sumProc,sumRes,minRes,maxProc);
+	if ((*numberOfProcesses <= *numberOfResources) || (sumProc <= sumRes) || (minRes <= maxProc))
 		return 1;
 	else
 		return 0;
@@ -105,7 +106,7 @@ int main(int argc, char *argv[])
 	int *slaveIds;
 	slaveIds = (int*)malloc(numberOfProcesses * sizeof(int));
 
-	if (err) {
+	if (err == 1) {
 		printf("Invalid input data. Please try again.\n");
 		freeMemory(resources, processes, numberOfProcesses, numberOfResources, slaveIds);
 		return -1;

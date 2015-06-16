@@ -32,7 +32,7 @@ void syncWithMaster(int *numberOfResources,Resource ***r, int *numberOfProcesses
 		processes[i] = (Process*)malloc(sizeof(Process));
 		processes[i]->id = ids[i];
 		processes[i]->size = sizes[i];
-        processes[i]->occupies = -1;
+        processes[i]->occupies = 0;
         processes[i]->resource = -1;
 	}
 	free(ids);
@@ -95,23 +95,17 @@ void handleResponseMessage(int *acceptedResponses, int myId, Process **processes
     processes[senderIdx]->occupies = state;
     processes[senderIdx]->ticketNumber = senderTicket;
 
-//    resource->state = state;
-//    if(state == -1)
-//    {
-//        ++(*emptyStatesReceived);
-//    }
-
     ++(*acceptedResponses);
 
     char log[255];
-    sprintf(log,"Received allow message from #%d",sender);
+    sprintf(log,"Received response message from #%d occupies = %d",sender,state);
     logEvent(log,myId);
 }
 
 void sendResponseMessage(int id, int occupies, int myId, long myTicket)
 {
     char log[255];
-    sprintf(log,"Sending allow message to #%d",id);
+    sprintf(log,"Sending response message to #%d occupies %d",id,occupies);
     logEvent(log,myId);
     pvm_initsend(PvmDataDefault);
     pvm_pkint(&occupies,1,1);
@@ -145,77 +139,15 @@ void handleRequestMessage(long ticket, long *maxTicket, int myId, int mySize,Res
 
     sendResponseMessage(id, occupies, myId,ticket);
     logEvent("Sent response message",myId);
-
-//    if(wantsToEnter == false || resource != currentResource->id || (requestTicket<ticket) || (requestTicket == ticket && id < myId))
-//    {
-//
-//    }
-//    else
-//    {
-//        int idx = getProcessIdx(id, processes, numOfProc);
-//        processes[idx]->ticketNumber = requestTicket;
-//        GList *l = g_list_append(*blockedProcesses,processes[idx]);
-//        *blockedProcesses = l;
-//        logEvent("Blocked",myId);
-//    }
 }
 
 void handleReleaseMessage(Process **processes,int numOfProc)
 {
     int state,sender;
-    pvm_upkint(&state,1,1);
     pvm_upkint(&sender,1,1);
+    pvm_upkint(&state,1,1);
     int senderIdx = getProcessIdx(sender,processes,numOfProc);
     processes[senderIdx]->occupies = 0;
-}
-
-void unblockOneWaitingProcess(Resource *currentResource,GList **blockedProcesses, int myId, int mySize)
-{
-//    GList *min;
-//    Process *blocked;
-//    min = findProcessWithMinTicket(*blockedProcesses);
-//
-//    if(min == NULL)
-//    {
-//        return;
-//    }
-//
-//    blocked = (Process*)min->data;
-//    if(blocked->size + currentResource->state <= currentResource->size)
-//    {
-//        currentResource->state += blocked->size;
-//        char buff[255];
-//        sprintf(buff,"Unblocking process #%d with size %d, resource state after unblock == %d / %d",blocked->id,blocked->size,currentResource->state,currentResource->size);
-//        logEvent(buff,myId);
-//        sendResponseMessage(blocked->id, currentResource->state, myId);
-//        removeProcess(blocked->id,blockedProcesses);
-//    }
-}
-
-void unblockAllWaitingProcesses(GList **blockedProcesses,int myId)
-{
-//    GList *l;
-//    Process *current;
-//    for(l=*blockedProcesses;l != NULL; l = l->next)
-//    {
-//        current = (Process*)l->data;
-//        sendResponseMessage(current->id, -1, myId);
-//    }
-//    g_list_free(*blockedProcesses);
-//    *blockedProcesses = NULL;
-}
-
-void blockedToString(GList *blockedProcesses,char *buff)
-{
-    GList *l;
-    Process *p;
-    for(l=blockedProcesses;l != NULL;l=l->next)
-    {
-        p = (Process*)l->data;
-        char tmp[64];
-        sprintf(tmp,"%d (ticket %ld),",p->id,p->ticketNumber);
-        strcat(buff,tmp);
-    }
 }
 
 int sumSizeOfAllBeforeMe(Process **processes,int numOfProc,long myTicket,int myId)
@@ -290,8 +222,17 @@ int main()
                 sprintf(buff,"Handled request message");//, blocked count == %d",(int)g_list_length(blockedProcesses));
                 logEvent(buff,myId);
             }
+
+            status = pvm_nrecv(ANY,MSG_RELEASE);
+            if(status != 0)
+            {
+                handleReleaseMessage(processes,numberOfProcesses);
+                logEvent("Received release message",myId);
+            }
         }
-        logEvent("Collected all responses!",myId);
+        char tmp4[255];
+        sprintf(tmp4,"Collected all responses, sum of all before me = %d",sumSizeOfAllBeforeMe(processes,numberOfProcesses,ticket,myId));
+        logEvent(tmp4,myId);
 
         while(sumSizeOfAllBeforeMe(processes,numberOfProcesses,ticket,myId) + mySize > currentResource->size)
         {
@@ -299,7 +240,7 @@ int main()
             if(status != 0)
             {
                 handleReleaseMessage(processes,numberOfProcesses);
-                continue;
+                logEvent("Received release message",myId);
             }
 
             status = pvm_nrecv(ANY,MSG_REQUEST);
@@ -327,6 +268,13 @@ int main()
         logEvent(tmp1,myId);
         while(clock() < endTime)
         {
+            status = pvm_nrecv(ANY,MSG_RELEASE);
+            if(status != 0)
+            {
+                handleReleaseMessage(processes,numberOfProcesses);
+                logEvent("Received release message",myId);
+            }
+
             status = pvm_nrecv(ANY,MSG_REQUEST);
             if(status != 0)
             {
