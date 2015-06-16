@@ -12,6 +12,8 @@ typedef struct _proc
 	int id;
 	long ticketNumber;
 	int size;
+    int occupies;
+    int resource;
 } Process;
 
 typedef enum _b
@@ -21,8 +23,6 @@ typedef enum _b
 } bool;
 
 #define ANY -1
-
-#define ACCEPT 7
 
 //message types and theirs structures (order of pvm_pk*)
 #define MSG_SYNC 1
@@ -47,13 +47,17 @@ typedef enum _b
 */
 
 #define MSG_ALLOW 5
+
+#define MSG_RESPONSE 7
 /*
-	send between slaves to allow access into cricital section (use tract)
+	send between slaves as a response to request
 	contents:
-	1. resource state (int)
+	1. size of process on specific tract (how many slot he occupies) (int)
  	2. sender process id (int)
+ 	3. sender ticket no. (long)
 */
 
+#define MSG_RELEASE 9
 #define MSG_SINGLE_STRING 1234
 
 //input file structure:
